@@ -1,5 +1,6 @@
 'use client'
 import { useCart } from '@/lib/store/cart'
+import { usePathname } from 'next/navigation'
 import { X, Trash2, Plus, Minus, ShoppingCart, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -7,7 +8,9 @@ import { formatINR } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 export default function CartDrawer() {
+  const pathname = usePathname()
   const { items, isOpen, closeCart, removeItem, updateQty } = useCart()
+  if (pathname?.startsWith('/admin')) return null
   const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0)
   const tax = Math.round(subtotal * 0.18)
   const total = subtotal + tax

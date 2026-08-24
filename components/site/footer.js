@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { ShieldCheck, Twitter, Github, Linkedin } from 'lucide-react'
+import ClientHide from './client-hide'
 
-export default function Footer() {
+function FooterInner() {
   const cols = [
     { title: 'Products', links: [
       { href: '/ssl-certificates?category=dv-ssl', label: 'DV SSL' },
@@ -63,4 +64,8 @@ export default function Footer() {
       </div>
     </footer>
   )
+}
+
+export default function Footer() {
+  return <ClientHide prefix="/admin"><FooterInner /></ClientHide>
 }

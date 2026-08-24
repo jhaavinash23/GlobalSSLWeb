@@ -26,6 +26,8 @@ export default function Navbar() {
     window.addEventListener('scroll', onScroll)
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+  // Hide public navbar on admin routes
+  if (pathname?.startsWith('/admin')) return null
   return (
     <header className={cn('sticky top-0 z-40 w-full border-b transition-all', scrolled ? 'border-slate-200 bg-white/85 backdrop-blur-xl' : 'border-transparent bg-white/60 backdrop-blur-md')}>
       <div className="container-x flex h-16 items-center justify-between gap-4">
