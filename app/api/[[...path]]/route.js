@@ -259,6 +259,285 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json({ ok: true, updated, matched: products.length }))
     }
 
+    // POST /admin/products  (create new product)
+    if (route === '/admin/products' && method === 'POST') {
+      if (!verifyAdminRequest(request)) {
+        return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      }
+      const body = await request.json().catch(() => ({}))
+      const required = ['name','brandSlug','categorySlug','validation']
+      for (const k of required) {
+        if (!body[k]) return handleCORS(NextResponse.json({ error: `${k} is required` }, { status: 400 }))
+      }
+      // Auto-slug
+      const baseSlug = (body.slug || body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+      let slug = baseSlug
+      let n = 1
+      while (await db.collection('products').findOne({ slug })) { n++; slug = `${baseSlug}-${n}` }
+
+      const brand = await db.collection('brands').findOne({ slug: body.brandSlug })
+      if (!brand) return handleCORS(NextResponse.json({ error: 'Invalid brand' }, { status: 400 }))
+
+      const wholesalePriceUsd = Number(body.wholesalePriceUsd) || 0
+      const msrpUsd = Number(body.msrpUsd) || 0
+      const markup = Number(body.markup) || 1.7
+      const priceOverride = body.priceOverride == null || body.priceOverride === '' ? null : Number(body.priceOverride)
+      const usdToInr = Number(body.usdToInr) || 85
+      const { price, originalPrice } = computePrices({ wholesalePriceUsd, msrpUsd, markup, priceOverride, usdToInr })
+
+      const now = new Date()
+      const id = 'p-' + Math.random().toString(36).slice(2, 10)
+      const product = {
+        id, slug, name: body.name, brandSlug: brand.slug, brandName: brand.name,
+        categorySlug: body.categorySlug, validation: body.validation,
+        wildcard: !!body.wildcard, multiDomain: !!body.multiDomain,
+        featured: !!body.featured, active: body.active !== false,
+        wholesalePriceUsd, msrpUsd, markup, priceOverride, usdToInr,
+        price, originalPrice, currency: 'INR',
+        warranty: body.warranty || '', issuance: body.issuance || '5 minutes', encryption: body.encryption || '256-bit',
+        shortDescription: body.shortDescription || '',
+        description: body.description || '',
+        features: Array.isArray(body.features) ? body.features : String(body.features || '').split(/\n|,/).map(s => s.trim()).filter(Boolean),
+        browsers: Array.isArray(body.browsers) ? body.browsers : String(body.browsers || 'Chrome,Firefox,Safari,Edge,iOS,Android').split(/\n|,/).map(s => s.trim()).filter(Boolean),
+        createdAt: now, updatedAt: now,
+      }
+      await db.collection('products').insertOne({ ...product })
+      return handleCORS(NextResponse.json(product))
+    }
+
+    // ============ ORDERS ============
+    // POST /orders  (create order from cart)
+    if (route === '/orders' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const { customer = {}, billing = {}, items = [], gst = {} } = body
+      if (!customer.email || !customer.name) {
+        return handleCORS(NextResponse.json({ error: 'Customer name and email required' }, { status: 400 }))
+      }
+      if (!items?.length) return handleCORS(NextResponse.json({ error: 'Cart is empty' }, { status: 400 }))
+
+      const ids = items.map(i => i.id)
+      const products = await db.collection('products').find({ id: { $in: ids }, active: true }).toArray()
+      const map = new Map(products.map(p => [p.id, p]))
+      const lineItems = []
+      for (const i of items) {
+        const p = map.get(i.id)
+        if (!p) continue
+        const qty = Math.max(parseInt(i.qty) || 1, 1)
+        lineItems.push({
+          productId: p.id, slug: p.slug, name: p.name, brandName: p.brandName, brandSlug: p.brandSlug,
+          validation: p.validation, wildcard: !!p.wildcard, multiDomain: !!p.multiDomain,
+          price: p.price, originalPrice: p.originalPrice, qty, lineTotal: p.price * qty,
+          warranty: p.warranty, issuance: p.issuance, encryption: p.encryption,
+          fulfillment: { status: 'AWAITING_CSR', csr: null, csrSubmittedAt: null,
+            dcvMethod: null, dcvSubmittedInfo: null,
+            dcvInstructions: null, dcvInstructionsAt: null,
+            dcvCompletedAt: null,
+            certificate: null, chain: null, issuedAt: null, expiresAt: null,
+            adminNote: null,
+          },
+        })
+      }
+      if (!lineItems.length) return handleCORS(NextResponse.json({ error: 'No valid products in cart' }, { status: 400 }))
+
+      const subtotal = lineItems.reduce((s, i) => s + i.lineTotal, 0)
+      const tax = Math.round(subtotal * 0.18)
+      const total = subtotal + tax
+      const now = new Date()
+      const orderNumber = `GSSL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+      const order = {
+        id: 'o-' + Math.random().toString(36).slice(2, 12),
+        orderNumber,
+        customer: { name: customer.name, email: customer.email, phone: customer.phone || '', company: customer.company || '' },
+        billing: {
+          address: billing.address || '', city: billing.city || '', state: billing.state || '',
+          postalCode: billing.postalCode || '', country: billing.country || 'India',
+        },
+        gst: { gstNumber: gst.gstNumber || '', companyName: gst.companyName || '' },
+        items: lineItems, subtotal, tax, total, currency: 'INR',
+        status: 'CREATED', paymentStatus: 'PENDING', paymentMethod: body.paymentMethod || 'manual',
+        adminNotes: '', createdAt: now, updatedAt: now,
+      }
+      await db.collection('orders').insertOne({ ...order })
+      return handleCORS(NextResponse.json({ ok: true, orderNumber, id: order.id }))
+    }
+
+    // GET /orders/:orderNumber  (customer tracking)
+    if (path[0] === 'orders' && path[1] && !path[2] && method === 'GET') {
+      const order = await db.collection('orders').findOne({ orderNumber: path[1] })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      return handleCORS(NextResponse.json(clean(order)))
+    }
+
+    // POST /orders/:orderNumber/csr  { itemIndex, csr, dcvMethod, dcvSubmittedInfo, email }
+    if (path[0] === 'orders' && path[1] && path[2] === 'csr' && method === 'POST') {
+      const orderNumber = path[1]
+      const body = await request.json().catch(() => ({}))
+      const order = await db.collection('orders').findOne({ orderNumber })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      // Simple owner check
+      if ((body.email || '').toLowerCase() !== (order.customer.email || '').toLowerCase()) {
+        return handleCORS(NextResponse.json({ error: 'Email does not match order' }, { status: 403 }))
+      }
+      const idx = Number(body.itemIndex)
+      const item = order.items[idx]
+      if (!item) return handleCORS(NextResponse.json({ error: 'Invalid item' }, { status: 400 }))
+      if (!body.csr || !body.csr.includes('BEGIN CERTIFICATE REQUEST')) {
+        return handleCORS(NextResponse.json({ error: 'Please paste a valid CSR (PEM format)' }, { status: 400 }))
+      }
+      if (!['email','dns','http'].includes(body.dcvMethod)) {
+        return handleCORS(NextResponse.json({ error: 'Choose a DCV method' }, { status: 400 }))
+      }
+      const now = new Date()
+      const setPath = `items.${idx}.fulfillment`
+      await db.collection('orders').updateOne(
+        { orderNumber },
+        {
+          $set: {
+            [`${setPath}.csr`]: body.csr.trim(),
+            [`${setPath}.dcvMethod`]: body.dcvMethod,
+            [`${setPath}.dcvSubmittedInfo`]: body.dcvSubmittedInfo || '',
+            [`${setPath}.csrSubmittedAt`]: now,
+            [`${setPath}.status`]: 'CSR_SUBMITTED',
+            status: order.status === 'PAID' || order.status === 'CREATED' ? 'CSR_SUBMITTED' : order.status,
+            updatedAt: now,
+          }
+        }
+      )
+      const updated = await db.collection('orders').findOne({ orderNumber })
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // POST /orders/:orderNumber/dcv-completed  { itemIndex, email }
+    if (path[0] === 'orders' && path[1] && path[2] === 'dcv-completed' && method === 'POST') {
+      const orderNumber = path[1]
+      const body = await request.json().catch(() => ({}))
+      const order = await db.collection('orders').findOne({ orderNumber })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      if ((body.email || '').toLowerCase() !== (order.customer.email || '').toLowerCase()) {
+        return handleCORS(NextResponse.json({ error: 'Email does not match' }, { status: 403 }))
+      }
+      const idx = Number(body.itemIndex)
+      const item = order.items[idx]
+      if (!item) return handleCORS(NextResponse.json({ error: 'Invalid item' }, { status: 400 }))
+      const now = new Date()
+      await db.collection('orders').updateOne(
+        { orderNumber },
+        { $set: { [`items.${idx}.fulfillment.dcvCompletedAt`]: now, [`items.${idx}.fulfillment.status`]: 'DCV_COMPLETED', status: 'DCV_COMPLETED', updatedAt: now } }
+      )
+      const updated = await db.collection('orders').findOne({ orderNumber })
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // ============ ADMIN ORDER ENDPOINTS ============
+    // GET /admin/orders
+    if (route === '/admin/orders' && method === 'GET') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      const q = {}
+      if (status) q.status = status
+      const orders = await db.collection('orders').find(q).sort({ createdAt: -1 }).limit(200).toArray()
+      return handleCORS(NextResponse.json({ items: orders.map(clean), total: orders.length }))
+    }
+
+    // GET /admin/orders/:orderNumber
+    if (path[0] === 'admin' && path[1] === 'orders' && path[2] && method === 'GET') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const order = await db.collection('orders').findOne({ orderNumber: path[2] })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      return handleCORS(NextResponse.json(clean(order)))
+    }
+
+    // PATCH /admin/orders/:orderNumber   { status?, paymentStatus?, adminNotes? }
+    if (path[0] === 'admin' && path[1] === 'orders' && path[2] && !path[3] && method === 'PATCH') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      const update = { updatedAt: new Date() }
+      const allowedStatus = ['CREATED','PAID','CSR_SUBMITTED','DCV_INSTRUCTIONS','DCV_COMPLETED','ISSUED','CANCELLED']
+      if (body.status && allowedStatus.includes(body.status)) update.status = body.status
+      if (body.paymentStatus && ['PENDING','PAID','REFUNDED','FAILED'].includes(body.paymentStatus)) update.paymentStatus = body.paymentStatus
+      if (typeof body.adminNotes === 'string') update.adminNotes = body.adminNotes
+      await db.collection('orders').updateOne({ orderNumber: path[2] }, { $set: update })
+      const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // PATCH /admin/orders/:orderNumber/items/:idx/dcv  { dcvInstructions }
+    if (path[0] === 'admin' && path[1] === 'orders' && path[2] && path[3] === 'items' && path[4] != null && path[5] === 'dcv' && method === 'PATCH') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      const idx = Number(path[4])
+      const order = await db.collection('orders').findOne({ orderNumber: path[2] })
+      if (!order || !order.items[idx]) return handleCORS(NextResponse.json({ error: 'Not found' }, { status: 404 }))
+      const now = new Date()
+      await db.collection('orders').updateOne(
+        { orderNumber: path[2] },
+        { $set: {
+          [`items.${idx}.fulfillment.dcvInstructions`]: body.dcvInstructions || '',
+          [`items.${idx}.fulfillment.dcvInstructionsAt`]: now,
+          [`items.${idx}.fulfillment.status`]: 'DCV_INSTRUCTIONS',
+          status: 'DCV_INSTRUCTIONS',
+          updatedAt: now,
+        } }
+      )
+      const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // PATCH /admin/orders/:orderNumber/items/:idx/certificate  { certificate, chain, expiresAt }
+    if (path[0] === 'admin' && path[1] === 'orders' && path[2] && path[3] === 'items' && path[4] != null && path[5] === 'certificate' && method === 'PATCH') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      const idx = Number(path[4])
+      if (!body.certificate || !String(body.certificate).includes('BEGIN CERTIFICATE')) {
+        return handleCORS(NextResponse.json({ error: 'Certificate PEM required' }, { status: 400 }))
+      }
+      const now = new Date()
+      await db.collection('orders').updateOne(
+        { orderNumber: path[2] },
+        { $set: {
+          [`items.${idx}.fulfillment.certificate`]: String(body.certificate).trim(),
+          [`items.${idx}.fulfillment.chain`]: body.chain ? String(body.chain).trim() : null,
+          [`items.${idx}.fulfillment.expiresAt`]: body.expiresAt ? new Date(body.expiresAt) : null,
+          [`items.${idx}.fulfillment.issuedAt`]: now,
+          [`items.${idx}.fulfillment.status`]: 'ISSUED',
+          status: 'ISSUED',
+          updatedAt: now,
+        } }
+      )
+      const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // GET /orders/:orderNumber/items/:idx/download?kind=cert|chain|bundle&email=X
+    if (path[0] === 'orders' && path[1] && path[2] === 'items' && path[3] != null && path[4] === 'download' && method === 'GET') {
+      const url = new URL(request.url)
+      const email = (url.searchParams.get('email') || '').toLowerCase()
+      const kind = url.searchParams.get('kind') || 'bundle'
+      const order = await db.collection('orders').findOne({ orderNumber: path[1] })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      if (email !== (order.customer.email || '').toLowerCase()) {
+        return handleCORS(NextResponse.json({ error: 'Email does not match order' }, { status: 403 }))
+      }
+      const item = order.items[Number(path[3])]
+      const f = item?.fulfillment
+      if (!f?.certificate) return handleCORS(NextResponse.json({ error: 'Certificate not issued yet' }, { status: 404 }))
+      let content = ''
+      let filename = `${order.orderNumber}-${item.slug}.crt`
+      if (kind === 'chain') { content = f.chain || ''; filename = `${order.orderNumber}-${item.slug}-chain.crt` }
+      else if (kind === 'bundle') { content = [f.certificate, f.chain].filter(Boolean).join('\n'); filename = `${order.orderNumber}-${item.slug}-bundle.crt` }
+      else content = f.certificate
+      return new Response(content, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/x-pem-file',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Access-Control-Allow-Origin': process.env.CORS_ORIGINS || '*',
+        },
+      })
+    }
+
     return handleCORS(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))
   } catch (error) {
     console.error('API Error:', error)

@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Search, Save, RefreshCw, Zap, Sparkles, ChevronRight, TrendingUp } from 'lucide-react'
+import { Loader2, Search, Save, RefreshCw, Zap, Sparkles, ChevronRight, TrendingUp, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import Link from 'next/link'
 
 const INR = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0)
 const round99 = (n) => Math.max(99, Math.round(Number(n) / 100) * 100 - 1)
@@ -128,6 +129,7 @@ export default function ProductsEditor() {
           <p className="mt-1 text-sm text-slate-500">Edit MSRP, wholesale, markup and pricing per product. Retail is re-computed automatically.</p>
         </div>
         <div className="flex gap-2">
+          <Button asChild><Link href="/admin/products/new"><Plus className="mr-2 h-4 w-4" />New product</Link></Button>
           <Button variant="outline" onClick={() => setBulkOpen(true)}><Sparkles className="mr-2 h-4 w-4" />Bulk markup</Button>
           <Button variant="outline" onClick={load}><RefreshCw className="mr-2 h-4 w-4" />Reload</Button>
         </div>

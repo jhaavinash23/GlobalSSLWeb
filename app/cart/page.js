@@ -83,8 +83,8 @@ export default function CartPage() {
               <div className="flex justify-between text-sm text-slate-600"><span>GST (18%)</span><span>{formatINR(tax)}</span></div>
               <div className="flex justify-between text-base font-bold border-t border-slate-100 pt-3"><span>Total</span><span>{formatINR(total)}</span></div>
             </div>
-            <Button size="lg" className="mt-6 w-full h-12" onClick={()=>toast.info('Checkout coming in Phase 2', { description: 'Razorpay + auth land next.' })}>
-              Proceed to Checkout <ArrowRight className="ml-1 h-4 w-4" />
+            <Button size="lg" className="mt-6 w-full h-12" asChild>
+              <Link href={`/checkout`}>Proceed to Checkout <ArrowRight className="ml-1 h-4 w-4" /></Link>
             </Button>
             <div className="mt-5 grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-1.5 text-slate-600"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />Server-verified prices</div>
