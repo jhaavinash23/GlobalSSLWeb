@@ -2,11 +2,12 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, Loader2, LogIn, UserPlus } from 'lucide-react'
+import { Loader2, LogIn, UserPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import Logo from '@/components/site/logo'
 
 export default function AuthForm({ mode }) {
   const isLogin = mode === 'login'
@@ -32,9 +33,8 @@ export default function AuthForm({ mode }) {
   return (
     <div className="min-h-[calc(100vh-4rem)] grid place-items-center bg-gradient-to-br from-slate-50 to-blue-50 py-10 px-4">
       <div className="w-full max-w-md">
-        <Link href="/" className="flex items-center justify-center gap-2 mb-6">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/20"><ShieldCheck className="h-5 w-5" /></div>
-          <span className="text-lg font-semibold tracking-tight">GlobalSSL<span className="text-blue-600">Web</span></span>
+        <Link href="/" className="flex items-center justify-center mb-6">
+          <Logo size={40} wordmarkClassName="text-lg" />
         </Link>
         <div className="card-elevated p-8">
           <h1 className="text-xl font-bold text-slate-900">{isLogin ? 'Sign in to your account' : 'Create your account'}</h1>

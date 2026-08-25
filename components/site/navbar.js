@@ -1,13 +1,14 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ShieldCheck, ShoppingCart, Menu, Search, X, User, LogOut, Package } from 'lucide-react'
+import { ShoppingCart, Menu, Search, X, User, LogOut, Package } from 'lucide-react'
 import { useCart } from '@/lib/store/cart'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import Logo from '@/components/site/logo'
 
 const NAV = [
   { href: '/ssl-certificates', label: 'SSL Certificates' },
@@ -37,11 +38,8 @@ export default function Navbar() {
   return (
     <header className={cn('sticky top-0 z-40 w-full border-b transition-all', scrolled ? 'border-slate-200 bg-white/85 backdrop-blur-xl' : 'border-transparent bg-white/60 backdrop-blur-md')}>
       <div className="container-x flex h-16 items-center justify-between gap-4">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow-md shadow-blue-500/20">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-          <span className="text-[15px] font-semibold tracking-tight text-slate-900">GlobalSSL<span className="text-blue-600">Web</span></span>
+        <Link href="/" className="flex items-center shrink-0" aria-label="GlobalSSLWeb home">
+          <Logo size={36} />
         </Link>
         <nav className="hidden md:flex items-center gap-1">
           {NAV.map(n => (

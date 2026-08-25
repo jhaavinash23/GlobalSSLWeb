@@ -1,6 +1,7 @@
 import { Toaster } from 'sonner'
 import Link from 'next/link'
-import { ShieldCheck, LayoutDashboard, Package, LogOut, ClipboardList, Users, LifeBuoy } from 'lucide-react'
+import { LayoutDashboard, Package, LogOut, ClipboardList, Users, LifeBuoy } from 'lucide-react'
+import Logo, { LogoMark } from '@/components/site/logo'
 
 export const metadata = { title: 'Admin', description: 'GlobalSSLWeb Admin' }
 
@@ -10,9 +11,9 @@ export default function AdminLayout({ children }) {
       <div className="flex">
         <aside className="hidden md:flex md:w-64 md:flex-col fixed inset-y-0 bg-slate-900 text-slate-100 border-r border-slate-800">
           <div className="flex h-16 items-center gap-2 px-6 border-b border-slate-800">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow"><ShieldCheck className="h-5 w-5" /></div>
+            <LogoMark size={36} />
             <div>
-              <div className="text-sm font-semibold leading-none">GlobalSSL<span className="text-blue-400">Web</span></div>
+              <div className="text-sm font-semibold leading-none text-white">GlobalSSL<span className="text-blue-400">Web</span></div>
               <div className="text-[10px] uppercase tracking-widest text-slate-400 mt-1">Admin</div>
             </div>
           </div>
@@ -32,7 +33,7 @@ export default function AdminLayout({ children }) {
         <div className="flex-1 md:ml-64 min-h-screen">
           <div className="md:hidden flex h-14 items-center justify-between px-4 border-b bg-white">
             <Link href="/admin" className="flex items-center gap-2">
-              <div className="grid h-7 w-7 place-items-center rounded-lg bg-blue-600 text-white"><ShieldCheck className="h-4 w-4" /></div>
+              <LogoMark size={28} />
               <span className="text-sm font-semibold">Admin</span>
             </Link>
             <form action="/api/admin/logout" method="POST"><button className="text-xs text-slate-500">Sign out</button></form>

@@ -1,11 +1,12 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, LogIn, Loader2 } from 'lucide-react'
+import { LogIn, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import Logo from '@/components/site/logo'
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -39,9 +40,8 @@ export default function AdminLoginPage() {
   return (
     <div className="min-h-screen grid place-items-center bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950 p-4">
       <div className="w-full max-w-md">
-        <div className="flex items-center justify-center gap-2 mb-8">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/30"><ShieldCheck className="h-6 w-6" /></div>
-          <span className="text-xl font-semibold text-white tracking-tight">GlobalSSL<span className="text-blue-400">Web</span></span>
+        <div className="flex items-center justify-center mb-8">
+          <Logo size={44} variant="dark" wordmarkClassName="text-xl" />
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-950/60 backdrop-blur p-8 shadow-2xl">
           <h1 className="text-xl font-bold text-white">Admin sign in</h1>

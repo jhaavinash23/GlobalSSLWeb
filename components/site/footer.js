@@ -1,6 +1,7 @@
 import Link from 'next/link'
-import { ShieldCheck, Twitter, Github, Linkedin } from 'lucide-react'
+import { Twitter, Github, Linkedin } from 'lucide-react'
 import ClientHide from './client-hide'
+import Logo from './logo'
 
 function FooterInner() {
   const cols = [
@@ -36,9 +37,8 @@ function FooterInner() {
       <div className="container-x py-14">
         <div className="grid grid-cols-2 gap-10 md:grid-cols-6">
           <div className="col-span-2">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white"><ShieldCheck className="h-5 w-5" /></div>
-              <span className="text-[15px] font-semibold tracking-tight">GlobalSSL<span className="text-blue-600">Web</span></span>
+            <Link href="/" className="flex items-center" aria-label="GlobalSSLWeb home">
+              <Logo size={36} />
             </Link>
             <p className="mt-4 max-w-sm text-sm text-slate-600">Premium SSL and digital security certificates from the world’s most trusted certificate authorities.</p>
             <div className="mt-4 flex gap-2">

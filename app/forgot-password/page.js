@@ -1,11 +1,12 @@
 'use client'
 import { useState } from 'react'
 import Link from 'next/link'
-import { ShieldCheck, Mail, Loader2 } from 'lucide-react'
+import { Mail, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import Logo from '@/components/site/logo'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -21,7 +22,7 @@ export default function ForgotPasswordPage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] grid place-items-center bg-gradient-to-br from-slate-50 to-blue-50 py-10 px-4">
       <div className="w-full max-w-md">
-        <Link href="/" className="flex items-center justify-center gap-2 mb-6"><div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow"><ShieldCheck className="h-5 w-5" /></div><span className="text-lg font-semibold">GlobalSSL<span className="text-blue-600">Web</span></span></Link>
+        <Link href="/" className="flex items-center justify-center mb-6"><Logo size={40} /></Link>
         <div className="card-elevated p-8">
           {sent ? (
             <div className="text-center py-4">

@@ -2,11 +2,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ShieldCheck, Loader2, CheckCircle2 } from 'lucide-react'
+import { Loader2, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import Logo from '@/components/site/logo'
 
 export default function ResetPasswordPage() {
   const params = useParams()
@@ -30,7 +31,7 @@ export default function ResetPasswordPage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] grid place-items-center bg-gradient-to-br from-slate-50 to-blue-50 py-10 px-4">
       <div className="w-full max-w-md">
-        <Link href="/" className="flex items-center justify-center gap-2 mb-6"><div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 text-white"><ShieldCheck className="h-5 w-5" /></div><span className="text-lg font-semibold">GlobalSSL<span className="text-blue-600">Web</span></span></Link>
+        <Link href="/" className="flex items-center justify-center mb-6"><Logo size={40} /></Link>
         <div className="card-elevated p-8">
           {done ? (
             <div className="text-center py-4"><CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" /><h1 className="mt-3 text-lg font-bold">Password updated</h1><p className="mt-2 text-sm text-slate-600">Redirecting you to sign in...</p></div>
