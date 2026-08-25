@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, ArrowLeft, Copy, CheckCircle2, Send, Upload, ExternalLink } from 'lucide-react'
+import { Loader2, ArrowLeft, Copy, CheckCircle2, Send, Upload, ExternalLink, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -73,6 +73,9 @@ export default function OrderDetail({ orderNumber }) {
           <div className="flex justify-between text-sm"><span className="text-slate-500">Subtotal</span><span>{INR(order.subtotal)}</span></div>
           <div className="flex justify-between text-sm"><span className="text-slate-500">GST 18%</span><span>{INR(order.tax)}</span></div>
           <div className="flex justify-between text-base font-bold border-t border-slate-100 pt-2"><span>Total</span><span>{INR(order.total)}</span></div>
+          {order.paymentStatus === 'PAID' && (
+            <a href={`/api/orders/${order.orderNumber}/invoice.pdf`} target="_blank" className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 w-full justify-center"><FileText className="h-3.5 w-3.5" />Download invoice {order.invoiceNumber || ''}</a>
+          )}
           <div className="pt-3 space-y-2">
             <div><Label className="text-[11px]">Payment status</Label>
               <Select value={order.paymentStatus} onValueChange={v => patch({ paymentStatus: v, ...(v === 'PAID' && order.status === 'CREATED' ? { status: 'PAID' } : {}) })}>

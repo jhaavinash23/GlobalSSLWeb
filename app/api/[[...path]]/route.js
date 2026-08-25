@@ -5,6 +5,7 @@ import { computePrices } from '@/lib/admin/pricing'
 import { verifyAdminRequest, setAdminCookie, clearAdminCookie, expectedToken } from '@/lib/admin/auth'
 import { hashPassword, verifyPassword, verifyUserRequest, setUserCookie, clearUserCookie, signUserToken } from '@/lib/auth/user'
 import { sendEmail, tplOrderPlaced, tplPaymentConfirmed, tplDcvInstructions, tplCertificateIssued, tplWelcome, tplPasswordReset, tplAdminSetPassword, tplTicketCreated, tplTicketAdminReply, tplTicketCustomerReply, tplTicketNewAdmin } from '@/lib/email'
+import { generateInvoicePDF, invoiceNumberFromCounter } from '@/lib/invoice/generate'
 import { v4 as uuidv4 } from 'uuid'
 import crypto from 'crypto'
 
@@ -472,7 +473,29 @@ async function handleRoute(request, { params }) {
       const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
       // Fire payment-confirmed email on PENDING → PAID transition
       if (updated && before?.paymentStatus !== 'PAID' && updated.paymentStatus === 'PAID') {
-        sendEmail({ to: updated.customer.email, ...tplPaymentConfirmed(updated) }).catch(() => {})
+        // Assign an invoice number (once) then generate PDF + attach to email
+        let invNum = updated.invoiceNumber
+        if (!invNum) {
+          const counter = await db.collection('counters').findOneAndUpdate(
+            { key: 'invoice' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' }
+          )
+          const seq = counter?.value?.seq || counter?.seq || 1
+          invNum = invoiceNumberFromCounter(seq)
+          await db.collection('orders').updateOne({ orderNumber: path[2] }, { $set: { invoiceNumber: invNum, invoicedAt: new Date() } })
+          updated.invoiceNumber = invNum
+          updated.invoicedAt = new Date()
+        }
+        try {
+          const pdf = await generateInvoicePDF(updated)
+          sendEmail({
+            to: updated.customer.email,
+            ...tplPaymentConfirmed(updated),
+            attachments: [{ filename: `${invNum.replace(/\//g, '-')}.pdf`, content: pdf }],
+          }).catch(() => {})
+        } catch (e) {
+          console.error('Invoice generation failed:', e?.message)
+          sendEmail({ to: updated.customer.email, ...tplPaymentConfirmed(updated) }).catch(() => {})
+        }
       }
       return handleCORS(NextResponse.json(clean(updated)))
     }
@@ -527,6 +550,36 @@ async function handleRoute(request, { params }) {
       // Notify customer certificate is ready
       sendEmail({ to: updated.customer.email, ...tplCertificateIssued(updated, updated.items[idx], idx) }).catch(() => {})
       return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // GET /orders/:orderNumber/invoice.pdf?email=X — customer invoice download
+    if (path[0] === 'orders' && path[1] && path[2] === 'invoice.pdf' && method === 'GET') {
+      const url = new URL(request.url)
+      const email = (url.searchParams.get('email') || '').toLowerCase()
+      const order = await db.collection('orders').findOne({ orderNumber: path[1] })
+      if (!order) return handleCORS(NextResponse.json({ error: 'Order not found' }, { status: 404 }))
+      const claims = verifyUserRequest(request)
+      const isAdminReq = verifyAdminRequest(request)
+      const okOwner = isAdminReq || email === (order.customer.email || '').toLowerCase() || claims?.email?.toLowerCase() === (order.customer.email || '').toLowerCase()
+      if (!okOwner) return handleCORS(NextResponse.json({ error: 'Email does not match order' }, { status: 403 }))
+      if (order.paymentStatus !== 'PAID') return handleCORS(NextResponse.json({ error: 'Invoice available after payment is confirmed' }, { status: 404 }))
+      // Auto-assign invoice number if somehow missing
+      if (!order.invoiceNumber) {
+        const counter = await db.collection('counters').findOneAndUpdate({ key: 'invoice' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' })
+        const seq = counter?.value?.seq || counter?.seq || 1
+        order.invoiceNumber = invoiceNumberFromCounter(seq)
+        order.invoicedAt = new Date()
+        await db.collection('orders').updateOne({ orderNumber: order.orderNumber }, { $set: { invoiceNumber: order.invoiceNumber, invoicedAt: order.invoicedAt } })
+      }
+      const pdf = await generateInvoicePDF(order)
+      return new Response(pdf, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${order.invoiceNumber.replace(/\//g, '-')}.pdf"`,
+          'Access-Control-Allow-Origin': process.env.CORS_ORIGINS || '*',
+        },
+      })
     }
 
     // GET /orders/:orderNumber/items/:idx/download?kind=cert|chain|bundle&email=X
