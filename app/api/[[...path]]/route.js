@@ -29,19 +29,14 @@ async function connectToMongo() {
 async function ensureSeeded(db) {
   const metaCol = db.collection('meta')
   const meta = await metaCol.findOne({ key: 'seed' })
-  const currentVersion = meta?.version || 0
-  if (currentVersion === SEED_VERSION) return
-  // Version changed — wipe & reseed
-  await Promise.all([
-    db.collection('brands').deleteMany({}),
-    db.collection('categories').deleteMany({}),
-    db.collection('products').deleteMany({}),
-  ])
-  await Promise.all([
-    db.collection('brands').insertMany(BRANDS.map(b => ({ ...b }))),
-    db.collection('categories').insertMany(CATEGORIES.map(c => ({ ...c }))),
-    db.collection('products').insertMany(PRODUCTS.map(p => ({ ...p }))),
-  ])
+  if (meta?.version === SEED_VERSION) return
+  // Idempotent upsert — never destroys existing (admin-edited) records.
+  //   brands/categories: $set so seed refinements land
+  //   products: $setOnInsert so admin's price/markup edits are preserved;
+  //             only NEW products from the seed get added
+  await Promise.all(BRANDS.map(b => db.collection('brands').updateOne({ id: b.id }, { $set: b }, { upsert: true })))
+  await Promise.all(CATEGORIES.map(c => db.collection('categories').updateOne({ id: c.id }, { $set: c }, { upsert: true })))
+  await Promise.all(PRODUCTS.map(p => db.collection('products').updateOne({ id: p.id }, { $setOnInsert: p }, { upsert: true })))
   await metaCol.updateOne({ key: 'seed' }, { $set: { key: 'seed', version: SEED_VERSION, updatedAt: new Date() } }, { upsert: true })
 }
 
