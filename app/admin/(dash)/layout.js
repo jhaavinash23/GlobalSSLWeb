@@ -1,6 +1,6 @@
 import { Toaster } from 'sonner'
 import Link from 'next/link'
-import { ShieldCheck, LayoutDashboard, Package, LogOut, ClipboardList } from 'lucide-react'
+import { ShieldCheck, LayoutDashboard, Package, LogOut, ClipboardList, Users } from 'lucide-react'
 
 export const metadata = { title: 'Admin', description: 'GlobalSSLWeb Admin' }
 
@@ -20,6 +20,7 @@ export default function AdminLayout({ children }) {
             <Link href="/admin" className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"><LayoutDashboard className="h-4 w-4" /> Dashboard</Link>
             <Link href="/admin/products" className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"><Package className="h-4 w-4" /> Products</Link>
             <Link href="/admin/orders" className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"><ClipboardList className="h-4 w-4" /> Orders</Link>
+            <Link href="/admin/users" className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"><Users className="h-4 w-4" /> Users</Link>
           </nav>
           <div className="p-4 border-t border-slate-800">
             <form action="/api/admin/logout" method="POST">

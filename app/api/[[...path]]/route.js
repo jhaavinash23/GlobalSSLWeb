@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server'
 import { BRANDS, CATEGORIES, PRODUCTS, SEED_VERSION } from '@/lib/data/seed'
 import { computePrices } from '@/lib/admin/pricing'
 import { verifyAdminRequest, setAdminCookie, clearAdminCookie, expectedToken } from '@/lib/admin/auth'
+import { hashPassword, verifyPassword, verifyUserRequest, setUserCookie, clearUserCookie, signUserToken } from '@/lib/auth/user'
+import { sendEmail, tplOrderPlaced, tplPaymentConfirmed, tplDcvInstructions, tplCertificateIssued, tplWelcome, tplPasswordReset, tplAdminSetPassword } from '@/lib/email'
+import { v4 as uuidv4 } from 'uuid'
+import crypto from 'crypto'
 
 let client
 let db
@@ -359,6 +363,11 @@ async function handleRoute(request, { params }) {
         adminNotes: '', createdAt: now, updatedAt: now,
       }
       await db.collection('orders').insertOne({ ...order })
+      // Retro-link to user account if one exists with matching email
+      const linkedUser = await db.collection('users').findOne({ email: customer.email.toLowerCase() })
+      if (linkedUser) await db.collection('orders').updateOne({ id: order.id }, { $set: { userId: linkedUser.id } })
+      // Fire order-placed email (non-blocking best-effort)
+      sendEmail({ to: order.customer.email, ...tplOrderPlaced(order) }).catch(() => {})
       return handleCORS(NextResponse.json({ ok: true, orderNumber, id: order.id }))
     }
 
@@ -458,8 +467,13 @@ async function handleRoute(request, { params }) {
       if (body.status && allowedStatus.includes(body.status)) update.status = body.status
       if (body.paymentStatus && ['PENDING','PAID','REFUNDED','FAILED'].includes(body.paymentStatus)) update.paymentStatus = body.paymentStatus
       if (typeof body.adminNotes === 'string') update.adminNotes = body.adminNotes
+      const before = await db.collection('orders').findOne({ orderNumber: path[2] })
       await db.collection('orders').updateOne({ orderNumber: path[2] }, { $set: update })
       const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      // Fire payment-confirmed email on PENDING → PAID transition
+      if (updated && before?.paymentStatus !== 'PAID' && updated.paymentStatus === 'PAID') {
+        sendEmail({ to: updated.customer.email, ...tplPaymentConfirmed(updated) }).catch(() => {})
+      }
       return handleCORS(NextResponse.json(clean(updated)))
     }
 
@@ -482,6 +496,9 @@ async function handleRoute(request, { params }) {
         } }
       )
       const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      // Notify customer of DCV instructions
+      const idxNum = Number(path[4])
+      sendEmail({ to: updated.customer.email, ...tplDcvInstructions(updated, updated.items[idxNum], idxNum) }).catch(() => {})
       return handleCORS(NextResponse.json(clean(updated)))
     }
 
@@ -507,6 +524,8 @@ async function handleRoute(request, { params }) {
         } }
       )
       const updated = await db.collection('orders').findOne({ orderNumber: path[2] })
+      // Notify customer certificate is ready
+      sendEmail({ to: updated.customer.email, ...tplCertificateIssued(updated, updated.items[idx], idx) }).catch(() => {})
       return handleCORS(NextResponse.json(clean(updated)))
     }
 
@@ -536,6 +555,174 @@ async function handleRoute(request, { params }) {
           'Access-Control-Allow-Origin': process.env.CORS_ORIGINS || '*',
         },
       })
+    }
+
+    // =============== USER AUTH ===============
+    // POST /auth/register  { name, email, password, phone?, company? }
+    if (route === '/auth/register' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const email = String(body.email || '').toLowerCase().trim()
+      if (!body.name || !email || !body.password) return handleCORS(NextResponse.json({ error: 'Name, email and password required' }, { status: 400 }))
+      if (String(body.password).length < 6) return handleCORS(NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 }))
+      const existing = await db.collection('users').findOne({ email })
+      if (existing) return handleCORS(NextResponse.json({ error: 'Email already registered — try signing in' }, { status: 409 }))
+      const now = new Date()
+      const user = {
+        id: 'u-' + uuidv4(), email, name: String(body.name).trim(),
+        phone: body.phone || '', company: body.company || '',
+        passwordHash: await hashPassword(body.password),
+        role: 'user', status: 'active', createdAt: now, updatedAt: now,
+      }
+      await db.collection('users').insertOne({ ...user })
+      // Retro-link any existing guest orders by email
+      await db.collection('orders').updateMany({ 'customer.email': email, userId: { $exists: false } }, { $set: { userId: user.id } })
+      sendEmail({ to: email, ...tplWelcome(user) }).catch(() => {})
+      const res = NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } })
+      setUserCookie(res, user)
+      return handleCORS(res)
+    }
+
+    // POST /auth/login  { email, password }
+    if (route === '/auth/login' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const email = String(body.email || '').toLowerCase().trim()
+      const user = await db.collection('users').findOne({ email })
+      if (!user || !(await verifyPassword(body.password || '', user.passwordHash))) {
+        return handleCORS(NextResponse.json({ error: 'Invalid email or password' }, { status: 401 }))
+      }
+      if (user.status === 'disabled') return handleCORS(NextResponse.json({ error: 'Account disabled — contact support' }, { status: 403 }))
+      const res = NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } })
+      setUserCookie(res, user)
+      return handleCORS(res)
+    }
+
+    // POST /auth/logout
+    if (route === '/auth/logout' && method === 'POST') {
+      const res = NextResponse.json({ ok: true })
+      clearUserCookie(res)
+      return handleCORS(res)
+    }
+
+    // GET /auth/me
+    if (route === '/auth/me' && method === 'GET') {
+      const claims = verifyUserRequest(request)
+      if (!claims) return handleCORS(NextResponse.json({ user: null }))
+      const user = await db.collection('users').findOne({ id: claims.sub })
+      if (!user) return handleCORS(NextResponse.json({ user: null }))
+      return handleCORS(NextResponse.json({ user: { id: user.id, email: user.email, name: user.name, phone: user.phone, company: user.company } }))
+    }
+
+    // POST /auth/forgot-password  { email }
+    if (route === '/auth/forgot-password' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const email = String(body.email || '').toLowerCase().trim()
+      const user = await db.collection('users').findOne({ email })
+      // Always return ok to prevent enumeration
+      if (user) {
+        const token = uuidv4().replace(/-/g, '')
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+        await db.collection('password_resets').insertOne({ token, userId: user.id, email, expiresAt, used: false, createdAt: new Date() })
+        sendEmail({ to: email, ...tplPasswordReset(email, token) }).catch(() => {})
+      }
+      return handleCORS(NextResponse.json({ ok: true }))
+    }
+
+    // POST /auth/reset-password  { token, password }
+    if (route === '/auth/reset-password' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      if (!body.token || !body.password || String(body.password).length < 6) return handleCORS(NextResponse.json({ error: 'Invalid reset request' }, { status: 400 }))
+      const rec = await db.collection('password_resets').findOne({ token: body.token, used: false })
+      if (!rec) return handleCORS(NextResponse.json({ error: 'Invalid or expired token' }, { status: 400 }))
+      if (new Date(rec.expiresAt) < new Date()) return handleCORS(NextResponse.json({ error: 'Reset link expired' }, { status: 400 }))
+      const passwordHash = await hashPassword(body.password)
+      await db.collection('users').updateOne({ id: rec.userId }, { $set: { passwordHash, updatedAt: new Date() } })
+      await db.collection('password_resets').updateOne({ token: body.token }, { $set: { used: true } })
+      return handleCORS(NextResponse.json({ ok: true }))
+    }
+
+    // GET /account/orders — signed-in user's orders
+    if (route === '/account/orders' && method === 'GET') {
+      const claims = verifyUserRequest(request)
+      if (!claims) return handleCORS(NextResponse.json({ error: 'Not signed in' }, { status: 401 }))
+      const orders = await db.collection('orders').find({
+        $or: [{ userId: claims.sub }, { 'customer.email': claims.email }]
+      }).sort({ createdAt: -1 }).limit(100).toArray()
+      return handleCORS(NextResponse.json({ items: orders.map(clean), total: orders.length }))
+    }
+
+    // PATCH /account  { name?, phone?, company?, currentPassword?, newPassword? }
+    if (route === '/account' && method === 'PATCH') {
+      const claims = verifyUserRequest(request)
+      if (!claims) return handleCORS(NextResponse.json({ error: 'Not signed in' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      const user = await db.collection('users').findOne({ id: claims.sub })
+      if (!user) return handleCORS(NextResponse.json({ error: 'Not found' }, { status: 404 }))
+      const update = { updatedAt: new Date() }
+      if (typeof body.name === 'string') update.name = body.name
+      if (typeof body.phone === 'string') update.phone = body.phone
+      if (typeof body.company === 'string') update.company = body.company
+      if (body.newPassword) {
+        if (!body.currentPassword || !(await verifyPassword(body.currentPassword, user.passwordHash))) {
+          return handleCORS(NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 }))
+        }
+        if (String(body.newPassword).length < 6) return handleCORS(NextResponse.json({ error: 'New password too short' }, { status: 400 }))
+        update.passwordHash = await hashPassword(body.newPassword)
+      }
+      await db.collection('users').updateOne({ id: user.id }, { $set: update })
+      return handleCORS(NextResponse.json({ ok: true }))
+    }
+
+    // =============== ADMIN USERS ===============
+    // GET /admin/users
+    if (route === '/admin/users' && method === 'GET') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const users = await db.collection('users').find({}).sort({ createdAt: -1 }).limit(500).toArray()
+      // Attach order count / spend
+      const uids = users.map(u => u.id)
+      const orderAgg = uids.length ? await db.collection('orders').aggregate([
+        { $match: { userId: { $in: uids } } },
+        { $group: { _id: '$userId', orders: { $sum: 1 }, spend: { $sum: '$total' } } },
+      ]).toArray() : []
+      const agg = Object.fromEntries(orderAgg.map(o => [o._id, o]))
+      const list = users.map(u => { const { passwordHash, _id, ...rest } = u; return { ...rest, orderCount: agg[u.id]?.orders || 0, totalSpend: agg[u.id]?.spend || 0 } })
+      return handleCORS(NextResponse.json({ items: list, total: list.length }))
+    }
+
+    // PATCH /admin/users/:id  { name?, email?, phone?, company?, status? }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && !path[3] && method === 'PATCH') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const id = path[2]
+      const body = await request.json().catch(() => ({}))
+      const user = await db.collection('users').findOne({ id })
+      if (!user) return handleCORS(NextResponse.json({ error: 'Not found' }, { status: 404 }))
+      const update = { updatedAt: new Date() }
+      if (typeof body.name === 'string') update.name = body.name
+      if (typeof body.phone === 'string') update.phone = body.phone
+      if (typeof body.company === 'string') update.company = body.company
+      if (body.status && ['active','disabled'].includes(body.status)) update.status = body.status
+      if (body.email && String(body.email).toLowerCase() !== user.email) {
+        const newEmail = String(body.email).toLowerCase().trim()
+        const dup = await db.collection('users').findOne({ email: newEmail })
+        if (dup) return handleCORS(NextResponse.json({ error: 'Email already in use' }, { status: 409 }))
+        update.email = newEmail
+        // Also update orders customer.email? Leave order emails intact for history integrity.
+      }
+      await db.collection('users').updateOne({ id }, { $set: update })
+      const updated = await db.collection('users').findOne({ id })
+      const { passwordHash, _id, ...rest } = updated
+      return handleCORS(NextResponse.json(rest))
+    }
+
+    // POST /admin/users/:id/reset-password — generates temp password + emails user
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'reset-password' && method === 'POST') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const user = await db.collection('users').findOne({ id: path[2] })
+      if (!user) return handleCORS(NextResponse.json({ error: 'Not found' }, { status: 404 }))
+      const tempPassword = crypto.randomBytes(6).toString('base64').replace(/[+/=]/g, '').slice(0, 10) + '!A1'
+      const passwordHash = await hashPassword(tempPassword)
+      await db.collection('users').updateOne({ id: user.id }, { $set: { passwordHash, updatedAt: new Date() } })
+      sendEmail({ to: user.email, ...tplAdminSetPassword(user, tempPassword) }).catch(() => {})
+      return handleCORS(NextResponse.json({ ok: true, tempPassword }))
     }
 
     return handleCORS(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))

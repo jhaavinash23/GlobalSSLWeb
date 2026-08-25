@@ -1,11 +1,13 @@
 'use client'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { ShieldCheck, ShoppingCart, Menu, Search, X } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { ShieldCheck, ShoppingCart, Menu, Search, X, User, LogOut, Package } from 'lucide-react'
 import { useCart } from '@/lib/store/cart'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
 const NAV = [
   { href: '/ssl-certificates', label: 'SSL Certificates' },
@@ -17,15 +19,19 @@ const NAV = [
 
 export default function Navbar() {
   const pathname = usePathname()
+  const router = useRouter()
   const openCart = useCart(s => s.openCart)
   const count = useCart(s => s.items.reduce((a, i) => a + i.qty, 0))
   const [mobile, setMobile] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [user, setUser] = useState(null)
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8)
     window.addEventListener('scroll', onScroll)
+    fetch('/api/auth/me').then(r => r.json()).then(d => setUser(d?.user || null)).catch(() => {})
     return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [pathname])
+  const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); toast.success('Signed out'); router.push('/') }
   // Hide public navbar on admin routes
   if (pathname?.startsWith('/admin')) return null
   return (
@@ -55,9 +61,27 @@ export default function Navbar() {
               <span className="absolute -top-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full bg-blue-600 text-[10px] font-semibold text-white ring-2 ring-white">{count}</span>
             )}
           </Button>
-          <Button asChild className="hidden md:inline-flex">
-            <Link href="/ssl-certificates">Browse SSL</Link>
-          </Button>
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm hover:border-slate-300">
+                  <div className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-blue-600 to-blue-500 text-white text-[11px] font-semibold">{user.name?.[0]?.toUpperCase() || 'U'}</div>
+                  <span className="text-slate-700 text-[13px] font-medium max-w-[100px] truncate">{user.name?.split(' ')[0]}</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel><div className="font-semibold text-slate-900">{user.name}</div><div className="text-[11px] font-normal text-slate-500 truncate">{user.email}</div></DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild><Link href="/account"><User className="mr-2 h-4 w-4" />My account</Link></DropdownMenuItem>
+                <DropdownMenuItem asChild><Link href="/account"><Package className="mr-2 h-4 w-4" />My orders</Link></DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout}><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button asChild variant="outline" size="sm" className="hidden md:inline-flex"><Link href="/login">Sign in</Link></Button>
+          )}
+          <Button asChild className="hidden md:inline-flex"><Link href="/ssl-certificates">Browse SSL</Link></Button>
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobile(v => !v)} aria-label="Menu">
             {mobile ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
