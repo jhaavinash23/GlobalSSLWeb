@@ -17,6 +17,7 @@ function FooterInner() {
       { href: '/#compare', label: 'Compare SSL' },
       { href: '/#faq', label: 'FAQ' },
       { href: '/ssl-certificates', label: 'Marketplace' },
+      { href: '/support/new', label: 'Contact support' },
     ]},
     { title: 'Company', links: [
       { href: '#', label: 'About' },

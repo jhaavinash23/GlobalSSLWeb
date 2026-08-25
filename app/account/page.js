@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { User, ShoppingBag, KeyRound, LogOut, Loader2, ExternalLink, ShieldCheck, Package } from 'lucide-react'
+import { User, ShoppingBag, KeyRound, LogOut, Loader2, ExternalLink, ShieldCheck, Package, LifeBuoy, RefreshCw, AlertTriangle, PlusCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { useCart } from '@/lib/store/cart'
 import { cn } from '@/lib/utils'
 
 const INR = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0)
@@ -52,10 +53,10 @@ export default function AccountPage() {
         <div className="card-elevated p-5"><div className="text-xs uppercase tracking-wider text-slate-500">Total spend</div><div className="mt-1 text-2xl font-bold">{INR(orders.reduce((s, o) => s + o.total, 0))}</div></div>
       </div>
 
-      <div className="border-b border-slate-200 flex gap-6">
-        {[{k:'orders',l:'Orders',i:ShoppingBag},{k:'certs',l:'My certificates',i:ShieldCheck},{k:'profile',l:'Profile & security',i:User}].map(t => {
+      <div className="border-b border-slate-200 flex gap-6 overflow-x-auto no-scrollbar">
+        {[{k:'orders',l:'Orders',i:ShoppingBag},{k:'certs',l:'My certificates',i:ShieldCheck},{k:'tickets',l:'Support',i:LifeBuoy},{k:'profile',l:'Profile & security',i:User}].map(t => {
           const I = t.i
-          return <button key={t.k} onClick={() => setTab(t.k)} className={cn('py-3 -mb-px inline-flex items-center gap-2 text-sm font-medium border-b-2', tab === t.k ? 'text-blue-700 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-900')}><I className="h-4 w-4" />{t.l}</button>
+          return <button key={t.k} onClick={() => setTab(t.k)} className={cn('py-3 -mb-px inline-flex items-center gap-2 text-sm font-medium border-b-2 whitespace-nowrap', tab === t.k ? 'text-blue-700 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-900')}><I className="h-4 w-4" />{t.l}</button>
         })}
       </div>
 
@@ -83,25 +84,106 @@ export default function AccountPage() {
           </div>
         )}
 
-        {tab === 'certs' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {issuedCerts.length === 0 ? (
-              <div className="col-span-2 card-elevated p-12 text-center"><ShieldCheck className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm text-slate-500">No issued certificates yet. Once we issue your first cert, download links will appear here.</p></div>
-            ) : issuedCerts.map(({ order, item, idx }, k) => (
-              <div key={k} className="card-elevated p-5">
-                <div className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">Issued</div>
-                <div className="mt-1 font-bold text-slate-900">{item.name}</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Order {order.orderNumber} · Expires {item.fulfillment?.expiresAt ? new Date(item.fulfillment.expiresAt).toLocaleDateString('en-IN') : '—'}</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" asChild><a href={`/api/orders/${order.orderNumber}/items/${idx}/download?kind=cert&email=${encodeURIComponent(user.email)}`}>Certificate</a></Button>
-                  <Button size="sm" variant="outline" asChild><a href={`/api/orders/${order.orderNumber}/items/${idx}/download?kind=bundle&email=${encodeURIComponent(user.email)}`}>Full bundle</a></Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {tab === 'certs' && <CertificatesTab issuedCerts={issuedCerts} email={user.email} />}
+        {tab === 'tickets' && <SupportTab user={user} />}
 
         {tab === 'profile' && <ProfileForm user={user} onUpdate={setUser} />}
+      </div>
+    </div>
+  )
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null
+  const ms = new Date(dateStr).getTime() - Date.now()
+  return Math.ceil(ms / (24 * 3600 * 1000))
+}
+
+function CertificatesTab({ issuedCerts, email }) {
+  const addItem = useCart(s => s.addItem)
+  const [renewing, setRenewing] = useState(null)
+  const renew = async (item) => {
+    setRenewing(item.productId)
+    try {
+      const res = await fetch(`/api/products/id/${item.productId}`)
+      if (!res.ok) throw new Error('Product no longer available')
+      const p = await res.json()
+      addItem(p, item.qty || 1)
+      toast.success('Added renewal to cart', { description: p.name })
+    } catch (e) { toast.error(e.message) }
+    finally { setRenewing(null) }
+  }
+  if (issuedCerts.length === 0) return (
+    <div className="card-elevated p-12 text-center"><ShieldCheck className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm text-slate-500">No issued certificates yet. Once we issue your first cert, it will appear here with expiry countdown + one-click renew.</p></div>
+  )
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {issuedCerts.map(({ order, item, idx }, k) => {
+        const days = daysUntil(item.fulfillment?.expiresAt)
+        const urgent = days != null && days <= 30
+        const soon = days != null && days > 30 && days <= 90
+        return (
+          <div key={k} className={cn('card-elevated p-5 relative overflow-hidden', urgent && 'ring-1 ring-red-200')}>
+            {urgent && <div className="absolute -right-8 top-3 rotate-45 bg-red-600 text-white text-[10px] font-bold px-8 py-0.5">EXPIRES SOON</div>}
+            <div className="flex items-center gap-2 text-[11px]"><span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">ISSUED</span><span className="text-slate-500">{item.brandName} · {item.validation}</span></div>
+            <div className="mt-1 font-bold text-slate-900 leading-tight">{item.name}</div>
+            <div className="mt-1 text-[11px] text-slate-500">Order {order.orderNumber}</div>
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">Expires</div>
+                <div className="text-sm font-semibold">{item.fulfillment?.expiresAt ? new Date(item.fulfillment.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">Countdown</div>
+                <div className={cn('text-sm font-bold', urgent && 'text-red-600', soon && 'text-amber-600', !urgent && !soon && 'text-emerald-600')}>{days != null ? (days < 0 ? `Expired ${-days}d ago` : `${days} days left`) : '—'}</div>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button size="sm" asChild><a href={`/api/orders/${order.orderNumber}/items/${idx}/download?kind=bundle&email=${encodeURIComponent(email)}`}>Download bundle</a></Button>
+              <Button size="sm" variant={urgent ? 'default' : 'outline'} onClick={() => renew(item)} disabled={renewing === item.productId} className={urgent ? 'bg-red-600 hover:bg-red-700' : ''}>
+                {renewing === item.productId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><RefreshCw className="mr-2 h-3.5 w-3.5" />Renew</>}
+              </Button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SupportTab({ user }) {
+  const [tickets, setTickets] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    fetch('/api/support/tickets', { cache: 'no-store' }).then(r => r.json()).then(d => { setTickets(d.items || []); setLoading(false) }).catch(() => setLoading(false))
+  }, [])
+  const STATUS_COLORS = { OPEN: 'bg-blue-50 text-blue-700', IN_PROGRESS: 'bg-amber-50 text-amber-700', RESOLVED: 'bg-emerald-50 text-emerald-700', CLOSED: 'bg-slate-100 text-slate-700' }
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-900">Your support tickets</h2>
+        <Button size="sm" asChild><Link href="/support/new"><PlusCircle className="mr-2 h-4 w-4" />New ticket</Link></Button>
+      </div>
+      <div className="card-elevated overflow-hidden">
+        {loading ? <div className="p-8 text-center text-sm text-slate-500"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Loading...</div>
+        : tickets.length === 0 ? (
+          <div className="p-12 text-center"><LifeBuoy className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm text-slate-500">You don&apos;t have any support tickets yet.</p><Button asChild className="mt-4" size="sm"><Link href="/support/new">Ask a question</Link></Button></div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wider"><tr><th className="text-left px-4 py-3">Ticket</th><th className="text-left px-3 py-3">Subject</th><th className="text-center px-3 py-3">Status</th><th className="text-left px-3 py-3">Updated</th><th className="text-right px-4 py-3"></th></tr></thead>
+            <tbody>
+              {tickets.map(t => (
+                <tr key={t.id} className="border-t border-slate-100">
+                  <td className="px-4 py-3"><div className="font-mono text-[12px] font-semibold">{t.ticketNumber}</div>{t.orderNumber && <div className="text-[11px] text-slate-500">Order {t.orderNumber}</div>}</td>
+                  <td className="px-3 py-3"><div className="text-slate-900 line-clamp-1 max-w-md">{t.subject}</div><div className="text-[11px] text-slate-500 line-clamp-1 max-w-md">{t.messages?.[t.messages.length - 1]?.body}</div></td>
+                  <td className="px-3 py-3 text-center"><span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold', STATUS_COLORS[t.status] || 'bg-slate-100')}>{(t.status || '').replace(/_/g, ' ')}</span></td>
+                  <td className="px-3 py-3 text-[11px] text-slate-500">{new Date(t.updatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</td>
+                  <td className="px-4 py-3 text-right"><Button size="sm" variant="outline" asChild><Link href={`/support/tickets/${t.ticketNumber}?email=${encodeURIComponent(user.email)}`}>Open</Link></Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )

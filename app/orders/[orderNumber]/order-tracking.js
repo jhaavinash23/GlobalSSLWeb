@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { CheckCircle2, Circle, Clock, Loader2, Upload, ShieldCheck, Download, Copy, AlertCircle, Info, Mail, Server, Globe2 } from 'lucide-react'
+import { CheckCircle2, Circle, Clock, Loader2, Upload, ShieldCheck, Download, Copy, AlertCircle, Info, Mail, Server, Globe2, LifeBuoy } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatINR } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -99,6 +99,7 @@ export default function OrderTracking({ orderNumber, emailParam, isNew }) {
           <div className="text-xs text-slate-500">Total</div>
           <div className="text-2xl font-bold">{formatINR(order.total)}</div>
           <div className="text-[11px] text-slate-500">Payment: <span className={cn('font-semibold', order.paymentStatus === 'PAID' ? 'text-emerald-600' : 'text-amber-600')}>{order.paymentStatus}</span></div>
+          <Link href={`/support/new?order=${order.orderNumber}`} className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"><LifeBuoy className="h-3 w-3" />Get help with this order</Link>
         </div>
       </div>
 

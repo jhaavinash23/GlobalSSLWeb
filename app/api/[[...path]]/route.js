@@ -4,7 +4,7 @@ import { BRANDS, CATEGORIES, PRODUCTS, SEED_VERSION } from '@/lib/data/seed'
 import { computePrices } from '@/lib/admin/pricing'
 import { verifyAdminRequest, setAdminCookie, clearAdminCookie, expectedToken } from '@/lib/admin/auth'
 import { hashPassword, verifyPassword, verifyUserRequest, setUserCookie, clearUserCookie, signUserToken } from '@/lib/auth/user'
-import { sendEmail, tplOrderPlaced, tplPaymentConfirmed, tplDcvInstructions, tplCertificateIssued, tplWelcome, tplPasswordReset, tplAdminSetPassword } from '@/lib/email'
+import { sendEmail, tplOrderPlaced, tplPaymentConfirmed, tplDcvInstructions, tplCertificateIssued, tplWelcome, tplPasswordReset, tplAdminSetPassword, tplTicketCreated, tplTicketAdminReply, tplTicketCustomerReply, tplTicketNewAdmin } from '@/lib/email'
 import { v4 as uuidv4 } from 'uuid'
 import crypto from 'crypto'
 
@@ -723,6 +723,119 @@ async function handleRoute(request, { params }) {
       await db.collection('users').updateOne({ id: user.id }, { $set: { passwordHash, updatedAt: new Date() } })
       sendEmail({ to: user.email, ...tplAdminSetPassword(user, tempPassword) }).catch(() => {})
       return handleCORS(NextResponse.json({ ok: true, tempPassword }))
+    }
+
+    // GET /products/id/:id — fetch a single product by id (used for renewals)
+    if (path[0] === 'products' && path[1] === 'id' && path[2] && method === 'GET') {
+      const p = await db.collection('products').findOne({ id: path[2], active: true })
+      if (!p) return handleCORS(NextResponse.json({ error: 'Product not available' }, { status: 404 }))
+      return handleCORS(NextResponse.json(clean(p)))
+    }
+
+    // =============== SUPPORT TICKETS ===============
+    // POST /support/tickets  { name, email, subject, body, orderNumber?, priority? }
+    if (route === '/support/tickets' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const claims = verifyUserRequest(request)
+      const email = String(body.email || claims?.email || '').toLowerCase().trim()
+      const name = String(body.name || claims?.name || '').trim()
+      if (!email || !name || !body.subject || !body.body) return handleCORS(NextResponse.json({ error: 'Name, email, subject and message are required' }, { status: 400 }))
+      const now = new Date()
+      const ticketNumber = `TKT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+      const ticket = {
+        id: 't-' + uuidv4(), ticketNumber,
+        userId: claims?.sub || null,
+        email, name, subject: String(body.subject).slice(0, 200),
+        orderNumber: body.orderNumber || null,
+        priority: ['low','normal','high','urgent'].includes(body.priority) ? body.priority : 'normal',
+        status: 'OPEN',
+        messages: [{ author: 'customer', name, body: String(body.body).slice(0, 8000), createdAt: now }],
+        createdAt: now, updatedAt: now,
+      }
+      await db.collection('tickets').insertOne({ ...ticket })
+      sendEmail({ to: email, ...tplTicketCreated(ticket) }).catch(() => {})
+      const adminEmail = process.env.ADMIN_NOTIFY_EMAIL
+      if (adminEmail) sendEmail({ to: adminEmail, ...tplTicketNewAdmin(ticket) }).catch(() => {})
+      return handleCORS(NextResponse.json({ ok: true, ticketNumber, id: ticket.id }))
+    }
+
+    // GET /support/tickets  (customer's own tickets — requires login)
+    if (route === '/support/tickets' && method === 'GET') {
+      const claims = verifyUserRequest(request)
+      if (!claims) return handleCORS(NextResponse.json({ error: 'Not signed in' }, { status: 401 }))
+      const tickets = await db.collection('tickets').find({ $or: [{ userId: claims.sub }, { email: claims.email }] }).sort({ createdAt: -1 }).limit(100).toArray()
+      return handleCORS(NextResponse.json({ items: tickets.map(clean), total: tickets.length }))
+    }
+
+    // GET /support/tickets/:ticketNumber?email=...
+    if (path[0] === 'support' && path[1] === 'tickets' && path[2] && !path[3] && method === 'GET') {
+      const t = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      if (!t) return handleCORS(NextResponse.json({ error: 'Ticket not found' }, { status: 404 }))
+      const claims = verifyUserRequest(request)
+      const url = new URL(request.url)
+      const emailQ = (url.searchParams.get('email') || '').toLowerCase()
+      const okOwner = (claims && (claims.sub === t.userId || claims.email === t.email)) || emailQ === t.email
+      if (!okOwner) return handleCORS(NextResponse.json({ error: 'Not authorised' }, { status: 403 }))
+      return handleCORS(NextResponse.json(clean(t)))
+    }
+
+    // POST /support/tickets/:ticketNumber/reply  { body, email }  (customer reply)
+    if (path[0] === 'support' && path[1] === 'tickets' && path[2] && path[3] === 'reply' && method === 'POST') {
+      const body = await request.json().catch(() => ({}))
+      const t = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      if (!t) return handleCORS(NextResponse.json({ error: 'Ticket not found' }, { status: 404 }))
+      const claims = verifyUserRequest(request)
+      const email = (claims?.email || String(body.email || '').toLowerCase())
+      if (email !== t.email) return handleCORS(NextResponse.json({ error: 'Not authorised' }, { status: 403 }))
+      if (!body.body) return handleCORS(NextResponse.json({ error: 'Message is required' }, { status: 400 }))
+      const now = new Date()
+      const message = { author: 'customer', name: t.name, body: String(body.body).slice(0, 8000), createdAt: now }
+      await db.collection('tickets').updateOne({ ticketNumber: path[2] }, { $push: { messages: message }, $set: { status: t.status === 'RESOLVED' ? 'OPEN' : t.status, updatedAt: now } })
+      const updated = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      const adminEmail = process.env.ADMIN_NOTIFY_EMAIL
+      if (adminEmail) sendEmail({ to: adminEmail, ...tplTicketCustomerReply(updated, message) }).catch(() => {})
+      return handleCORS(NextResponse.json(clean(updated)))
+    }
+
+    // ADMIN
+    // GET /admin/tickets
+    if (route === '/admin/tickets' && method === 'GET') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      const q = status ? { status } : {}
+      const tickets = await db.collection('tickets').find(q).sort({ createdAt: -1 }).limit(200).toArray()
+      return handleCORS(NextResponse.json({ items: tickets.map(clean), total: tickets.length }))
+    }
+    // GET /admin/tickets/:num
+    if (path[0] === 'admin' && path[1] === 'tickets' && path[2] && !path[3] && method === 'GET') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const t = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      if (!t) return handleCORS(NextResponse.json({ error: 'Not found' }, { status: 404 }))
+      return handleCORS(NextResponse.json(clean(t)))
+    }
+    // PATCH /admin/tickets/:num  { status, priority }
+    if (path[0] === 'admin' && path[1] === 'tickets' && path[2] && !path[3] && method === 'PATCH') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      const update = { updatedAt: new Date() }
+      if (body.status && ['OPEN','IN_PROGRESS','RESOLVED','CLOSED'].includes(body.status)) update.status = body.status
+      if (body.priority && ['low','normal','high','urgent'].includes(body.priority)) update.priority = body.priority
+      await db.collection('tickets').updateOne({ ticketNumber: path[2] }, { $set: update })
+      const t = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      return handleCORS(NextResponse.json(clean(t)))
+    }
+    // POST /admin/tickets/:num/reply  { body }
+    if (path[0] === 'admin' && path[1] === 'tickets' && path[2] && path[3] === 'reply' && method === 'POST') {
+      if (!verifyAdminRequest(request)) return handleCORS(NextResponse.json({ error: 'Unauthorised' }, { status: 401 }))
+      const body = await request.json().catch(() => ({}))
+      if (!body.body) return handleCORS(NextResponse.json({ error: 'Message is required' }, { status: 400 }))
+      const now = new Date()
+      const message = { author: 'admin', name: 'Support', body: String(body.body).slice(0, 8000), createdAt: now }
+      await db.collection('tickets').updateOne({ ticketNumber: path[2] }, { $push: { messages: message }, $set: { status: 'IN_PROGRESS', updatedAt: now } })
+      const updated = await db.collection('tickets').findOne({ ticketNumber: path[2] })
+      sendEmail({ to: updated.email, ...tplTicketAdminReply(updated, message) }).catch(() => {})
+      return handleCORS(NextResponse.json(clean(updated)))
     }
 
     return handleCORS(NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }))
